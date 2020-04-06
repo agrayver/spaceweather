@@ -10,6 +10,7 @@ import warnings
 import matplotlib.pyplot as plt
 from scipy.stats import kde
 import tensorflow as tf
+import sklearn
 from sklearn import preprocessing
 
 """
@@ -268,7 +269,7 @@ def datasplit(data_in, data_out, batch_size, train_percent=0.8, lahead=1, \
     return data_in_train, data_out_train, data_in_test, data_out_test
 
 
-def reliability(pred, obs, thres, bin_edges, exc='geq', first=True):
+def reliability(pred, obs, thres, bin_edges, exc='geq', first=True, bootstrap=500):
     """
     This function computes reliability curves for first exceedance of a given threshold in a time series. Given a probilistic forecast of exceedance of the threshold, this function will compute the actual observed exceedance rate of the threshold (at that probability level). Given that we  always have finite data, we first bin the data into intervals of probability.
     
@@ -283,6 +284,21 @@ def reliability(pred, obs, thres, bin_edges, exc='geq', first=True):
     OUT:
         obs_exc: for bins, returns observed exceedance rates
     """
+    # for each prediction, compute exceedance probability of threshold
+    prob_pred = pred.cdf(thres)
+    
+    # take other complementary probability mass for greater than or equal
+    if exc =='geq':
+        prob_pred = 1-prob_pred
+    
+    # ignore nans
+    val_idx = np.logical_not(np.isnan(prob_pred))
+    prob_pred = prob_pred[val_idx]
+    obs = obs[val_idx]
+    
+    # set any predicted probabilities of 1 to 0.9999 (pathological case)
+    prob_pred[prob_pred==1] = 0.9999
+    
     nobs = len(obs)
     
     # compute exceedances indices
@@ -298,25 +314,53 @@ def reliability(pred, obs, thres, bin_edges, exc='geq', first=True):
         tmp_idx = np.zeros(nobs, dtype=bool)
         tmp_idx[exc_idx] = True
         exc_idx = tmp_idx
-        
-    # for each prediction, compute exceedance probability of threshold
-    prob_pred = [cur_pred.cdf(thres) for cur_pred in pred]
-    prob_pred = np.asarray(prob_pred).reshape(-1)
-    if exc =='geq':
-        prob_pred = 1-prob_pred
     
     nbins = len(bin_edges) - 1
-    obs_exc = np.zeros(nbins)
-    for ii in range(nbins):
-        cur_idx = (prob_pred >= bin_edges[ii]) & (prob_pred < bin_edges[ii+1])
-        n_in_bin = np.sum(cur_idx)
-        # if fewer than 50 predicted probabilities fall in bin, ignore
-        if n_in_bin <= 50:
-            obs_exc[ii] = np.nan
-        else:
-            obs_exc[ii] = np.sum(exc_idx[cur_idx])/n_in_bin
-    return obs_exc
-            
+    obs_exc = np.zeros((nbins, bootstrap))
+    consist = np.zeros((nbins, bootstrap))
+    
+    # bin data by probability bins
+    bin_idx = np.digitize(prob_pred, bin_edges)-1
+    
+    for tt in range(bootstrap):
+        # resample within each bin
+        cur_exc_idx = exc_idx.copy()
+        for ii in range(nbins):
+            cur_bin_idx = np.where(bin_idx==ii)[0]
+            n_in_bin = len(cur_bin_idx)
+            sam_idx = np.random.randint(0, n_in_bin, n_in_bin)
+            re_sam_idx = cur_bin_idx[sam_idx]
+            cur_exc_idx[cur_bin_idx] = cur_exc_idx[re_sam_idx]
+
+        bin_c = np.bincount(bin_idx, weights=cur_exc_idx)/np.bincount(bin_idx)
+        obs_exc[0:len(bin_c), tt] = bin_c
+        
+    # also compute consistency computation (see Brocker and Smith, 2007)
+    for tt in range(bootstrap):
+        z = np.random.rand(nobs)
+        y = z < prob_pred
+        bin_c = np.bincount(bin_idx, weights=y)/np.bincount(bin_idx)
+        consist[0:len(bin_c), tt] = bin_c
+    
+    obs_exc_mean = np.mean(obs_exc, axis=1)
+    obs_exc_std = np.std(obs_exc, axis=1)
+    obs_exc_pct = np.percentile(obs_exc, [2.5, 97.5], axis=1)
+    
+    # compute consistency intervals 2.5-97.5 quantiles
+    consist_pct = np.percentile(consist, [2.5, 97.5], axis=1)
+           
+    return obs_exc_mean, obs_exc_pct, consist_pct
+   
+# not implemented as stand-alone function yet
+# def brier():
+#     brier = 0;
+#     obs_exc_total = np.sum(exc_idx)/nobs
+#     bin_cen = (bin_edges[1:] + bin_edges[:-1]) / 2
+#     for ii in range(nbins):
+#         brier += 1/nobs*(n_in_bin*(obs_exc[ii]-bin_cen[ii])**2) - \
+#                  1/nobs*(n_in_bin*(bin_cen[ii]-obs_exc_total)**2)
+#     brier += obs_exc_total*(1-obs_exc_total)
+
 
 class Dataset():
     """
