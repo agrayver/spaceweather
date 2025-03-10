@@ -2,7 +2,9 @@
 
 Notebooks for a project with aim of predicting the response of Earth's external magnetic field to solar activity via ''deep learning''.
 
-Note to self: first ssh @ela.cscs.ch _then_ ssh daint
+Citation:
+
+> Tasistro‐Hart, A., Grayver, A., & Kuvshinov, A. (2021). Probabilistic geomagnetic storm forecasting via deep learning. Journal of Geophysical Research: Space Physics, 126(1), https://doi.org/10.1029/2020JA028228
 
 ## Overview
 
